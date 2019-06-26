@@ -16,6 +16,35 @@ from datetime import datetime
 
 
 # **defining functions**
+def ld_clumping(trait_path,main_path):
+    """
+    todo: explain
+    :param target:
+    :return:
+    """
+    print('Start ld_clumping ..', datetime.now())
+    plink = main_path + "noamha/ProjectMiNE/plink - 1.07 - x86_64/plink - 1.07 - x86_64/plink"
+
+
+    hapmap_1000G = main_path + "noamha/ProjectMiNE/scripts/prs_calc/1000G_20101123_v3_GIANT_chr1_23_minimacnamesifnotRS_YRI_MAF0.01/1000G_20101123_v3_GIANT_chr1_23_minimacnamesifnotRS_YRI_MAF0.01.bed"
+
+    # Compute MAFs of variants in projectmine data
+    command = ('%s' % plink) + \
+            ' --bfile' + (' %s' % hapmap_1000G) + \
+            ' - -clump' + (' %s' % trait_path) + \
+            ' - -clump - kb' + (' %s' % 1000) + \
+            ' --out' + (' %s' % trait_path)
+    print('Running: ', command, '..')
+    os.system(command)
+
+    # ------------------------------------------------------------
+    #post_process_frq_files(frq_file=projectmine_data+'.frq', annot_file=annot_file)
+    # ------------------------------------------------------------
+    print('Start ld_clumping ..', datetime.now())
+    return None
+
+
+
 
 def read_discovery_trait_file(path, trait):
     """
@@ -101,8 +130,20 @@ def create_variant_identifier_column(df):
     print('Start create_variant_identifier_column', datetime.now())
 
     df.loc[:,'ID'] = 'chr' + df['chr'].map(str) + ':' + df['BP'].map(str) + ":" + df['A2'].map(str) + ":" + df['A1'].map(str)
+    df.loc[:,'pos'] = 'chr' + df['chr'].map(str) + ':' + df['BP'].map(str)
 
     print('Finish create_variant_identifier_column', datetime.now())
+    return df
+
+
+def reading_rs_data(path):
+    """
+    todo: right expleination
+    :param path:
+    :return:
+    """
+    df = pd.read_csv(path, sep='\t')
+    df.loc[:, 'pos'] = df['#chrom'].map(str) + ':' + df['chromEnd'].map(str)
     return df
 
 
@@ -116,8 +157,10 @@ def target_PRS_calc(traits_df, file_path):
     :return:
     """
 
-    print('Start target_PRS_calc ..', datetime.now())
 
+    print('Start target_PRS_calc ..', datetime.now())
+    # reading the rs data for anotation
+    #rs_data = reading_rs_data(path=file_path + "noamha/ProjectMiNE/scripts/prs_calc/all_snps_18.txt")
     n = None
     num_traits = traits_df.shape[1]
 
@@ -140,9 +183,12 @@ def target_PRS_calc(traits_df, file_path):
 
         # intersection of variants' weights from the discovery GWAS and the Target ProjectMiNE dataset
         intersec_SNP = merge_discovery_and_target(traits_df, bim)
+        # adding rs column fo identifing
 
+        #intersec_SNP = merge_with_rs_identifier(df=intersec_SNP, anotation_data=rs_data)
         # p-value thresholding
-        intersec_SNP = pvalue_thresholding(df=intersec_SNP, p=0.1)
+        print("intesec=", intersec_SNP.head(5))
+        #intersec_SNP = pvalue_thresholding(df=intersec_SNP, p=0.1)
 
         # index number of SNPs
         i = 0
@@ -157,8 +203,10 @@ def target_PRS_calc(traits_df, file_path):
         ## TODO: delete? snp_names = intersec_SNP.index.values
 
         print("Strating to iterate on bed file.. ", datetime.now())
-
+        bp_np = intersec_SNP['BP_x'].values
+        snp_id_set = set(intersec_SNP.index)
         # iterate on the bed file by columns (in a lazy manner)
+
         for loci_name, geno in bed:
 
             # change the name from the form of 'chr21:14840569:G:A' to 14840569
@@ -167,7 +215,7 @@ def target_PRS_calc(traits_df, file_path):
             #print("if loci_name in snp_names:", datetime.now())
             # checking if the variant is a valid one
 
-            if short_surch(loci_name, intersec_SNP) and long_surch(loci_name, intersec_SNP):
+            if short_surch(loci_name, bp_np) and long_surch(loci_name, snp_id_set):
                 #print("if loci_name in snp_names:", i, datetime.now())
 
                 # get the weight
@@ -195,7 +243,7 @@ def target_PRS_calc(traits_df, file_path):
 
         total_PRS_scores += chr_PRS[0]
 
-        print(" *************** Finished chromosome" + str(CH) + "!! *************** ")
+        print(" *************** Finished chromosome" + str(CH) + "!! *************** there was", i, "snps")
 
     total_PRS_scores = pd.DataFrame(data=total_PRS_scores, columns=fam['iid'], index=['PRS_score'])
 
@@ -268,7 +316,7 @@ def merge_discovery_and_target(weights_df, bim_df):
     # merge on 'snp' (the index of bim) and the column 'ID' in trait file
 
     df = pd.merge(bim_df, weights_df, how='inner', left_index=True, right_on=['ID'], copy=False).set_index('ID')
-
+    df.loc[:,'ID']=df.index
     # verify there are no duplicates
     df = df[~df.index.duplicated(keep='first')]
     # TODO: print(df.columns) and keep only relevant columns df = df[[]]
@@ -277,6 +325,21 @@ def merge_discovery_and_target(weights_df, bim_df):
     print('Finish merge_discovery_and_target', datetime.now())
 
     return df
+
+
+def merge_with_rs_identifier(df,anotation_data):
+    """
+    taking the data frame and adding rs identifier with the help of anotation data
+    :param df:
+    :return:
+    """
+
+    #making an rs column cold "name" from 'chr1:1226690' to 'rs70949569'
+    print("befor rs there was", df.shape)
+    df_rs = pd.merge(df, anotation_data, how='inner', left_on=['pos'], right_on=['pos'], copy=False).set_index('ID')
+    df_rs = df_rs[~df_rs.index.duplicated(keep='first')]
+    print("after rs there is", df_rs.shape)
+    return df_rs
 
 
 def pvalue_thresholding(df, p=0.05):
@@ -311,7 +374,7 @@ def change_snp_column_values(my_string):
     return snp_loc
 
 
-def short_surch(loci, snp_bp):
+def short_surch(loci, bp_set):
     """
     fast surch - alawing shor sircuit
     :param loci: string, the full snp name
@@ -320,9 +383,10 @@ def short_surch(loci, snp_bp):
     """
     loci_bp = change_snp_column_values(loci)
     #print("this is in the short - num: ", loci_bp, "in", snp_bp[0:5])
-    is_it_there = loci_bp in set(snp_bp['BP_x'].values)
+    is_it_there = loci_bp in bp_set
 
     return is_it_there
+
 
 def long_surch(loci, snp_id):
     """
@@ -331,7 +395,7 @@ def long_surch(loci, snp_id):
     :param snp_id: dataframe vector of the ID
     :return: bulian T or F
     """
-    is_it_there = loci in set(snp_id.index)
+    is_it_there = loci in snp_id
 
     return is_it_there
 
@@ -354,7 +418,7 @@ def main(main_path=None, PRSs_path=None, trait=None):
 
 
         trait_path = PRSs_path + "ADHD/adhd_jul2017"
-
+        ld_clumping(trait_path,main_path)
         weights_df = read_discovery_trait_file(trait_path, trait)
 
         # calculating PRS
@@ -379,5 +443,12 @@ if __name__ == "__main__":
     else:
         main_path = r"/home/labs/hornsteinlab/"
     PRSs_path = main_path + "nancyy/data/PRSsumstat/"
-
+    #os.chdir(main_path + "noamha/ProjectMiNE/scripts/prs_calc/")
     main(main_path, PRSs_path, trait='ADHD')
+
+
+
+
+
+
+
